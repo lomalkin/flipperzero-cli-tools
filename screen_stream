@@ -1,16 +1,11 @@
-#!/usr/bin/env python3
+#!venv/bin/python
 
 # -*- coding: utf-8 -*- 
-
-import os
 
 import sys
 import serial
 
 import numpy
-
-script_directory = os.path.dirname(os.path.abspath(__file__))
-activate_this_file = os.path.join(script_directory, './venv/bin/activate.py')
 
 res_x = 128
 res_y = 64
