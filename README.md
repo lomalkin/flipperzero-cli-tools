@@ -15,4 +15,5 @@
 
 ### Tools
 
-* `./screen /dev/tty<path to Flipper serial>` - Make screenshot directly to console and save to `screen.png`
+* `./screen /dev/tty<path to Flipper serial>` - Make screenshot directly to terminal and save to `screen.png`.
+* `./screen_stream /dev/tty<path to Flipper serial>` - Screen streaming directly to terminal (need UTF support).
