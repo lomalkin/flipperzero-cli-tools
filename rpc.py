@@ -4,6 +4,7 @@ import sys, os, time
 import serial
 
 from flipperzero_protobuf_py.flipper_protobuf import ProtoFlipper
+from flipperzero_protobuf_py.flipperzero_protobuf_compiled import flipper_pb2, system_pb2
 from flipperzero_protobuf_py.cli_helpers import *
 
 def flp_exec_cmd(proto, cmd):
@@ -32,6 +33,12 @@ def flp_exec_cmd(proto, cmd):
         proto.cmd_app_exit()
     elif cmd == 's1':
         time.sleep(1)
+    elif cmd == 'reboot':
+        proto.cmd_reboot_os()
+    elif cmd == 'dfu':
+        proto.cmd_reboot_dfu()
+    elif cmd == 'update':
+        proto.cmd_reboot_update()
     else:
         print("Unknown command " + cmd, file=sys.stderr)
 
@@ -53,6 +60,29 @@ def flp_serial_by_name(flp_name):
         else:
             return ''
 
+class ProtoFlipperExt(ProtoFlipper):
+    def cmd_reboot_os(self):
+        """Reboot flipper OS"""
+        cmd_data = system_pb2.RebootRequest()
+        cmd_data.mode = system_pb2.RebootRequest.RebootMode.OS
+        data = self._cmd_send_and_read_answer(
+            cmd_data, 'system_reboot_request')
+        return data
+    def cmd_reboot_dfu(self):
+        """Reboot flipper to DFU"""
+        cmd_data = system_pb2.RebootRequest()
+        cmd_data.mode = system_pb2.RebootRequest.RebootMode.DFU
+        data = self._cmd_send_and_read_answer(
+            cmd_data, 'system_reboot_request')
+        return data
+    def cmd_reboot_update(self):
+        """Reboot flipper to Update"""
+        cmd_data = system_pb2.RebootRequest()
+        cmd_data.mode = system_pb2.RebootRequest.RebootMode.UPDATE
+        data = self._cmd_send_and_read_answer(
+            cmd_data, 'system_reboot_request')
+        return data
+
 def main():
     flp_serial = flp_serial_by_name(sys.argv[1])
 
@@ -72,7 +102,8 @@ def main():
     flipper.write(b"start_rpc_session\r")
     flipper.read_until(b'\n')
 
-    proto = ProtoFlipper(flipper)
+    #proto = ProtoFlipper(flipper)
+    proto = ProtoFlipperExt(flipper)
 
     flp_exec_cmds(proto, sys.argv[2:])
 
