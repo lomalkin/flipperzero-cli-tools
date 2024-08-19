@@ -7,7 +7,7 @@ import serial
 from flipperzero_protobuf_py.flipper_protobuf import ProtoFlipper
 from src.cli_helpers import print_hex
 
-from helpers import print_screen_braille3 as print_screen_braille, print_lines_in_one_place, flipper_serial_by_name
+from src.helpers import print_screen_braille3 as print_screen_braille, print_lines_in_one_place, flipper_serial_by_name
 import time
 
 from src.non_blocking_input import NonBlockingInput

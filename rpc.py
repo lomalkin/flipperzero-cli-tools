@@ -7,7 +7,7 @@ from flipperzero_protobuf_py.flipper_protobuf import ProtoFlipper
 from flipperzero_protobuf_py.flipperzero_protobuf_compiled import flipper_pb2, system_pb2
 from src.cli_helpers import *
 
-from helpers import print_screen_braille3 as print_screen_braille, flipper_serial_by_name
+from src.helpers import print_screen_braille3 as print_screen_braille, flipper_serial_by_name
 
 def flp_exec_cmd(proto, cmd):
     if cmd == 'alert':
