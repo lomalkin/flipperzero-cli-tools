@@ -7,7 +7,9 @@
 * $ `cd flipper-cli-tools`
 * $ `git submodule update --init --recursive`
 * $ `python3 -m venv venv`
+* $ `. venv/bin/activate`
 * $ `pip install -r requirements.txt`
+* $ `deactivate`
 
 ## Usage
 
@@ -15,6 +17,14 @@
 
 * $ `. venv/bin/activate` - to activate python virtual environment
 * $ `deactivate` - to deactivate
+
+### Interactive CLI tool with screen streaming
+
+```
+./clipper.py <flipper_name or /dev/tty..>
+```
+
+### RPC Examples
 
 **Command line arguments**
 

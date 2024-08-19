@@ -5,7 +5,9 @@ import serial
 
 from flipperzero_protobuf_py.flipper_protobuf import ProtoFlipper
 from flipperzero_protobuf_py.flipperzero_protobuf_compiled import flipper_pb2, system_pb2
-from flipperzero_protobuf_py.cli_helpers import *
+from src.cli_helpers import *
+
+from helpers import print_screen_braille3 as print_screen_braille, flipper_serial_by_name
 
 def flp_exec_cmd(proto, cmd):
     if cmd == 'alert':
@@ -29,6 +31,8 @@ def flp_exec_cmd(proto, cmd):
         proto.cmd_gui_send_input("SHORT BACK")
     elif cmd == 'screen':
         print_screen(proto.cmd_gui_snapshot_screen())
+    elif cmd == 'screen_braille':
+        print_screen_braille(proto.cmd_gui_snapshot_screen())
     elif cmd == 'exit':
         proto.cmd_app_exit()
     elif cmd == 's1':
@@ -46,19 +50,6 @@ def flp_exec_cmds(proto, cmds):
     for cmd in cmds:
         flp_exec_cmd(proto, cmd)
 
-def flp_serial_by_name(flp_name):
-    if sys.platform == 'darwin':    #MacOS
-        flp_serial = '/dev/cu.usbmodemflip_' + flp_name + '1'
-    elif sys.platform == 'linux':   #Linux
-        flp_serial = '/dev/serial/by-id/usb-Flipper_Devices_Inc._Flipper_' + flp_name + '_flip_' + flp_name + '-if00'
-
-    if os.path.exists(flp_serial):
-        return flp_serial
-    else:
-        if os.path.exists(flp_name):
-            return flp_name
-        else:
-            return ''
 
 class ProtoFlipperExt(ProtoFlipper):
     def cmd_reboot_os(self):
@@ -84,8 +75,11 @@ class ProtoFlipperExt(ProtoFlipper):
         return data
 
 def main():
-    flp_serial = flp_serial_by_name(sys.argv[1])
+    if len(sys.argv) < 2:
+        print("Usage: " + sys.argv[0] + " <name or serial port>")
+        sys.exit(1)
 
+    flp_serial = flipper_serial_by_name(sys.argv[1])
     if flp_serial == '':
         print("Name or serial port is invalid")
         sys.exit(1)

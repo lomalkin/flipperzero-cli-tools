@@ -1,2 +1,16 @@
-venv
 *.png
+.old
+
+# OS crap
+.DS_Store
+
+# Python VirtEnvironments
+.env
+.venv
+env/
+venv/
+
+# Python Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
