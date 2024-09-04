@@ -1,14 +1,16 @@
-
 import numpy
 import sys, os
 
 def flipper_serial_by_name(flp_name):
-    if sys.platform == 'darwin':    #MacOS
+    flp_serial = None  # Инициализация переменной
+    if sys.platform == 'darwin':    # MacOS
         flp_serial = '/dev/cu.usbmodemflip_' + flp_name + '1'
-    elif sys.platform == 'linux':   #Linux
+    elif sys.platform == 'linux':   # Linux
         flp_serial = '/dev/serial/by-id/usb-Flipper_Devices_Inc._Flipper_' + flp_name + '_flip_' + flp_name + '-if00'
+    elif sys.platform == 'win32':   # Windows
+        flp_serial = '\\\\.\\' + flp_name
 
-    if os.path.exists(flp_serial):
+    if flp_serial and os.path.exists(flp_serial):
         return flp_serial
     else:
         if os.path.exists(flp_name):
@@ -89,5 +91,3 @@ def print_screen_braille3(screen_bytes, return_output=False):
         return '\n'.join(output)
     else:
         print('\n'.join(output))
-
-
