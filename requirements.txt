@@ -7,3 +7,4 @@ protoletariat==3.2.19
 pyserial==3.5
 setuptools==72.2.0
 soupsieve==2.6
+keyboard == 0.13.5

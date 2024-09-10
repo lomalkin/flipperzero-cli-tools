@@ -1,94 +1,71 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 
+import logging
+import os
 import sys
-import serial
+import asyncio
+import keyboard
+import argparse
+from serial.serialutil import SerialException
 
-from flipperzero_protobuf_py.flipper_protobuf import ProtoFlipper
-from src.cli_helpers import print_hex
+# Setting up the current directory and import paths
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(current_dir, 'flipperzero_protobuf_py'))
 
-from src.helpers import print_screen_braille3 as print_screen_braille, print_lines_in_one_place, flipper_serial_by_name
-import time
+# Import necessary classes and functions from your library
+from async_protopy.clients.protobuf_client import FlipperProtobufClient
+from async_protopy.connectors.serial_connector import SerialConnector
+from src.cli_helpers import print_screen, print_screen_braille, handle_keypress, stream_screen
 
-from src.non_blocking_input import NonBlockingInput
+async def stream_screen_braille(proto):
+    """Function to display the screen using Braille."""
+    await stream_screen(proto, lambda scrbytes: print(print_screen_braille(scrbytes, True)))
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: " + sys.argv[0] + " <name or serial port>")
-        sys.exit(1)
+async def stream_screen_unicode(proto):
+    """Function to display the screen using Unicode."""
+    await stream_screen(proto, print_screen)
 
-    flp_serial = flipper_serial_by_name(sys.argv[1])
-    if flp_serial == '':
-        print("Name or serial port is invalid")
-        sys.exit(1)
 
-    flipper = serial.Serial(flp_serial, timeout=1)
-    flipper.baudrate = 230400
-    flipper.flushOutput()
-    flipper.flushInput()
+async def main():
+    global shutdown_flag
 
-    flipper.timeout = None
-
-    flipper.read_until(b'>: ')
+    parser = argparse.ArgumentParser(description="Stream screen from Flipper Zero to terminal.")
+    parser.add_argument('port', help="Serial port to connect to (e.g., COM5).")
+    parser.add_argument('mode', nargs='?', default='unicode', 
+                        help="Display mode: 'braille' for Braille, 'unicode' (default) for Unicode.")
     
-    flipper.write(b"start_rpc_session\r")
-    flipper.read_until(b'\n')
+    args = parser.parse_args()
 
-    proto = ProtoFlipper(flipper)
+    flp_serial = args.port
 
-    cntr = 0
-    scr_data_str_old = None
-
-    menuitems = "Controls: w,a,s,d - arrows short, W,A,S,D - arrows long, SPACE - OK, b - BACK, q - quit"
-
-    # Reserve space for screen
-    print(menuitems)
-    print("\n" * int(64/4-1))
-
-    while True:
-        key = None
-        with NonBlockingInput():
-            key = sys.stdin.read(1)
-        
-        scrbytes = proto.cmd_gui_snapshot_screen()
-        scr_data_str = print_screen_braille(scrbytes, True)
-
-        if scr_data_str != scr_data_str_old or key != '':
-            print_lines_in_one_place(scr_data_str.split('\n'))
-
-            if key != '':
-                # print('tick', repr(key), print_hex(key.encode('utf-8')))
-                if key == 'q':
-                    break
-                elif key == 'w' or key == '\x1b[A':
-                    proto.cmd_gui_send_input("SHORT UP")
-                elif key == 's' or key == '\x1b[B':
-                    proto.cmd_gui_send_input("SHORT DOWN")
-                elif key == 'a' or key == '\x1b[D':
-                    proto.cmd_gui_send_input("SHORT LEFT")
-                elif key == 'd' or key == '\x1b[C':
-                    proto.cmd_gui_send_input("SHORT RIGHT")
-                elif key == ' ':
-                    proto.cmd_gui_send_input("SHORT OK")
-                elif key == 'b':
-                    proto.cmd_gui_send_input("SHORT BACK")
-                elif key == 'W':
-                    proto.cmd_gui_send_input("LONG UP")
-                elif key == 'S':
-                    proto.cmd_gui_send_input("LONG DOWN")
-                elif key == 'A':
-                    proto.cmd_gui_send_input("LONG LEFT")
-                elif key == 'D':
-                    proto.cmd_gui_send_input("LONG RIGHT")
-            
-            key = ''
-
-            scr_data_str_old = scr_data_str
-    
-        time.sleep(0.01)
-        
-        cntr += 1
-
+    try:
+        async with FlipperProtobufClient(SerialConnector(url=flp_serial, baud_rate=230400)) as proto:
+            # Select streaming mode (Braille or Unicode)
+            if args.mode == 'braille':
+                await asyncio.gather(
+                    handle_keypress(proto),     # Handle key presses
+                    stream_screen_braille(proto)  # Stream screen in Braille
+                )
+            else:
+                await asyncio.gather(
+                    handle_keypress(proto),     # Handle key presses
+                    stream_screen_unicode(proto)  # Stream screen in Unicode
+                )
+    except SerialException as e:
+        logging.error(f"SerialException: failed to open port {flp_serial}: {e}")
 
 if __name__ == '__main__':
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print('Interrupted')
+        try:
+            sys.exit(130)
+        except SystemExit:
+            os._exit(130)
+    except Exception as e:
+        print(f"Error in the main program: {e}", exc_info=True)
+    finally:
+        keyboard.unhook_all()
+        print("Flipper ending completed.")
+        sys.exit(0)  # Forcefully terminate the program

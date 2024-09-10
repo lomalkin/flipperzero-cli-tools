@@ -1,80 +1,87 @@
 #!/usr/bin/env python3
 
 import sys, os, time
-import serial
+import asyncio
+import serial_asyncio
+
+# Добавление пути к модулю flipperzero_protobuf_py
+current_dir = os.path.dirname(os.path.abspath(__file__))
+flipper_protobuf_path = os.path.join(current_dir, 'flipperzero_protobuf_py')
+if flipper_protobuf_path not in sys.path:
+    sys.path.append(flipper_protobuf_path)
 
 from flipperzero_protobuf_py.flipper_protobuf import ProtoFlipper
 from flipperzero_protobuf_py.flipperzero_protobuf_compiled import flipper_pb2, system_pb2
 from src.cli_helpers import *
-
 from src.helpers import print_screen_braille3 as print_screen_braille, flipper_serial_by_name
 
-def flp_exec_cmd(proto, cmd):
+async def flp_exec_cmd(proto, cmd):
     if cmd == 'alert':
-        proto.cmd_system_audiovisual_alert()
+        await proto.cmd_system_audiovisual_alert()
     elif cmd == 'ping':
-        if proto.cmd_system_ping() == b'\xde\xad\xbe\xef':
+        if await proto.cmd_system_ping() == b'\xde\xad\xbe\xef':
             print('pong')
         else:
             print('ping error', file=sys.stderr)
     elif cmd == 'up':
-        proto.cmd_gui_send_input("SHORT UP")
+        await proto.cmd_gui_send_input("SHORT UP")
     elif cmd == 'dn':
-        proto.cmd_gui_send_input("SHORT DOWN")
+        await proto.cmd_gui_send_input("SHORT DOWN")
     elif cmd == 'lt':
-        proto.cmd_gui_send_input("SHORT LEFT")
+        await proto.cmd_gui_send_input("SHORT LEFT")
     elif cmd == 'rt':
-        proto.cmd_gui_send_input("SHORT RIGHT")
+        await proto.cmd_gui_send_input("SHORT RIGHT")
     elif cmd == 'ok':
-        proto.cmd_gui_send_input("SHORT OK")
+        await proto.cmd_gui_send_input("SHORT OK")
     elif cmd == 'bk':
-        proto.cmd_gui_send_input("SHORT BACK")
+        await proto.cmd_gui_send_input("SHORT BACK")
     elif cmd == 'screen':
-        print_screen(proto.cmd_gui_snapshot_screen())
+        print_screen(await proto.cmd_gui_snapshot_screen())
     elif cmd == 'screen_braille':
-        print_screen_braille(proto.cmd_gui_snapshot_screen())
+        print_screen_braille(await proto.cmd_gui_snapshot_screen())
     elif cmd == 'exit':
-        proto.cmd_app_exit()
+        await proto.cmd_app_exit()
     elif cmd == 's1':
-        time.sleep(1)
+        await asyncio.sleep(1)
     elif cmd == 'reboot':
-        proto.cmd_reboot_os()
+        await proto.cmd_reboot_os()
     elif cmd == 'dfu':
-        proto.cmd_reboot_dfu()
+        await proto.cmd_reboot_dfu()
     elif cmd == 'update':
-        proto.cmd_reboot_update()
+        await proto.cmd_reboot_update()
     else:
         print("Unknown command " + cmd, file=sys.stderr)
 
-def flp_exec_cmds(proto, cmds):
+async def flp_exec_cmds(proto, cmds):
     for cmd in cmds:
-        flp_exec_cmd(proto, cmd)
-
+        await flp_exec_cmd(proto, cmd)
 
 class ProtoFlipperExt(ProtoFlipper):
-    def cmd_reboot_os(self):
+    async def cmd_reboot_os(self):
         """Reboot flipper OS"""
         cmd_data = system_pb2.RebootRequest()
         cmd_data.mode = system_pb2.RebootRequest.RebootMode.OS
-        data = self._cmd_send_and_read_answer(
-            cmd_data, 'system_reboot_request')
-        return data
-    def cmd_reboot_dfu(self):
-        """Reboot flipper to DFU"""
-        cmd_data = system_pb2.RebootRequest()
-        cmd_data.mode = system_pb2.RebootRequest.RebootMode.DFU
-        data = self._cmd_send_and_read_answer(
-            cmd_data, 'system_reboot_request')
-        return data
-    def cmd_reboot_update(self):
-        """Reboot flipper to Update"""
-        cmd_data = system_pb2.RebootRequest()
-        cmd_data.mode = system_pb2.RebootRequest.RebootMode.UPDATE
-        data = self._cmd_send_and_read_answer(
+        data = await self._cmd_send_and_read_answer(
             cmd_data, 'system_reboot_request')
         return data
 
-def main():
+    async def cmd_reboot_dfu(self):
+        """Reboot flipper to DFU"""
+        cmd_data = system_pb2.RebootRequest()
+        cmd_data.mode = system_pb2.RebootRequest.RebootMode.DFU
+        data = await self._cmd_send_and_read_answer(
+            cmd_data, 'system_reboot_request')
+        return data
+
+    async def cmd_reboot_update(self):
+        """Reboot flipper to Update"""
+        cmd_data = system_pb2.RebootRequest()
+        cmd_data.mode = system_pb2.RebootRequest.RebootMode.UPDATE
+        data = await self._cmd_send_and_read_answer(
+            cmd_data, 'system_reboot_request')
+        return data
+
+async def main():
     if len(sys.argv) < 2:
         print("Usage: " + sys.argv[0] + " <name or serial port>")
         sys.exit(1)
@@ -84,22 +91,14 @@ def main():
         print("Name or serial port is invalid")
         sys.exit(1)
     
-    flipper = serial.Serial(flp_serial, timeout=1)
-    flipper.baudrate = 230400
-    flipper.flushOutput()
-    flipper.flushInput()
+    reader, writer = await serial_asyncio.open_serial_connection(url=flp_serial, baudrate=230400)
 
-    flipper.timeout = None
+    writer.write(b"start_rpc_session\r")
+    await reader.readuntil(b'\n')
 
-    flipper.read_until(b'>: ')
+    proto = ProtoFlipperExt(reader, writer)
 
-    flipper.write(b"start_rpc_session\r")
-    flipper.read_until(b'\n')
-
-    #proto = ProtoFlipper(flipper)
-    proto = ProtoFlipperExt(flipper)
-
-    flp_exec_cmds(proto, sys.argv[2:])
+    await flp_exec_cmds(proto, sys.argv[2:])
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
