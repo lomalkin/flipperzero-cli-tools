@@ -1,239 +1,260 @@
-#!/usr/bin/env python3
-
 import numpy
 import os
 import sys
 import asyncio
-import keyboard
-import logging
-
-# Logging setup
-logging.basicConfig(level=logging.DEBUG)
-
-# Setting up the current directory and import paths
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(current_dir, 'flipperzero_protobuf_py'))
-
-# Import necessary classes and functions
+import platform
+import shutil
+import traceback
+from pynput import keyboard
 from async_protopy.commands.gui_commands import StartScreenStreamRequestCommand
+from async_protopy.flipperzero_protobuf_compiled import gui_pb2
 
-SCREEN_H = 128
-SCREEN_W = 64
+if platform.system() == "Windows":
+    import msvcrt
+else:
+    import termios
 
-# ANSI escape codes for setting color
-BLACK_ON_ORANGE = "\033[30;48;5;208m"
-RESET_COLOR = "\033[0m"
+# Логика для работы с вводом и Flipper в виде классов
+class FlipperHelper:
+    
+    def __init__(self):
+        self.shift_pressed = False
+        self.shutdown_flag = False
+        self.old_termios = None
+        # ANSI цвета для фона
+        self.BLACK_ON_ORANGE = "\033[30;48;5;208m"
+        self.RESET_COLOR = "\033[0m"
 
-shutdown_flag = False  # Flag to terminate the program
+    def disable_input(self):
+        """Disable input based on OS."""
+        if platform.system() == "Windows":
+            pass
+        else:
+            self.old_termios = termios.tcgetattr(sys.stdin)  # Save terminal settings
+            tty_attr = termios.tcgetattr(sys.stdin)
+            tty_attr[3] = tty_attr[3] & ~(termios.ICANON | termios.ECHO)  # Disable canonical mode and echo
+            termios.tcsetattr(sys.stdin, termios.TCSANOW, tty_attr)  # Apply new attributes
+            os.system('stty -echo')  # Disable echo
 
+    def enable_input(self):
+        """Enable input based on OS."""
+        if platform.system() == "Windows":
+            pass
+        else:
+            termios.tcsetattr(sys.stdin, termios.TCSANOW, self.old_termios)  # Restore terminal settings
+            termios.tcflush(sys.stdin, termios.TCIOFLUSH)  # Flush buffers
+            os.system('stty echo')  # Enable echo
 
-def get_bin(x):
-    return format(x, 'b')
+    def clear_windows_input_buffer(self):
+        """Clears the input buffer on Windows."""
+        while msvcrt.kbhit():
+            msvcrt.getch()
 
+    def on_press(self, key, proto, commands, loop, running_event):
+        """Handle key press event."""
+        try:
+            if key in (keyboard.Key.shift, keyboard.Key.shift_r):
+                self.shift_pressed = True
 
-def print_screen_braille(screen_bytes, return_output=False):
-    data = screen_bytes
-    scr = numpy.zeros((SCREEN_W, SCREEN_H))
+            if key in commands:
+                duration_type = gui_pb2.InputType.LONG if self.shift_pressed else gui_pb2.InputType.SHORT
+                asyncio.run_coroutine_threadsafe(self.send_command_to_flipper(proto, commands[key], duration_type), loop)
 
-    x = y = 0
-    basex = 0
+            if key == keyboard.Key.esc:
+                running_event.clear()
+                self.shutdown_program()  # Terminate the program
+                return False  # Stop listener
 
-    for i in range(0, int(SCREEN_H * SCREEN_W / 8)):
-        tmp = get_bin(data[i])
-        tmp = '0' * (8 - len(tmp)) + tmp
-        tmp = tmp[::-1]
+        except Exception as e:
+            print(f"Error: {e}")
+            running_event.clear()
+            self.shutdown_program()  # Terminate the program
+            return False
 
-        x = basex
-        y += 1
+    def on_release(self, key):
+        if key in (keyboard.Key.shift, keyboard.Key.shift_r):
+            self.shift_pressed = False
 
-        for c in tmp:
-            scr[x][y % SCREEN_H] = int(c)
-            x += 1
+    async def handle_flipper_commands(self, proto):
+        """Asynchronous function for handling Flipper commands."""
+        try:
+            while True:
+                await asyncio.sleep(0.1)
+        except Exception as e:
+            print(f"Error in Flipper handling: {e}")
+            traceback.print_exc()
 
-        if (i + 1) % SCREEN_H == 0:
-            basex += 8
-            y = 0
+    async def send_command_to_flipper(self, proto, key, duration_type):
+        """Send command to Flipper."""
+        try:
+            key_str = gui_pb2.InputKey.Name(key)
+            type_str = gui_pb2.InputType.Name(duration_type)
 
-    output = []
+            await proto.gui.send_input_event_request(key=key_str, itype="PRESS")
+            await proto.gui.send_input_event_request(key=key_str, itype=type_str)
+            await proto.gui.send_input_event_request(key=key_str, itype="RELEASE")
+        except Exception as e:
+            print(f"Error sending command to Flipper: {e}")
+            traceback.print_exc()
 
-    for j in range(0, SCREEN_W, 4):
-        line = []
+    def display_manual_below_screen(self):
+        """Display control manual below the screen."""
+        columns, rows = shutil.get_terminal_size()
+        print(f"{self.BLACK_ON_ORANGE}Controls: Arrows - D-pad, Enter - OK, Backspace/Delete - BACK, key+shift - long press, Esc - quit{self.RESET_COLOR}")
 
-        for i in range(1, SCREEN_H, 2):
-            v = 0
+    async def stream_screen(self, proto, display_function):
+        """Stream screen from Flipper."""
+        stream_response = await proto.stream(StartScreenStreamRequestCommand(), command_id=0)
+        last_data = None
 
-            for k in range(8):
-                x = j
-                y = i
-                
-                if k <= 2:
-                    x += k
-                elif k <= 5:
-                    y += 1
-                    x += k - 3
-                elif k == 6:
-                    x += 3
-                else:
-                    y += 1
-                    x += 3
+        async for data in stream_response:
+            if self.shutdown_flag:
+                break
 
-                if x < SCREEN_W and y < SCREEN_H and scr[x][y]:
-                    v |= (1 << k)
+            if not data.gui_screen_frame.data:
+                continue
 
-            braille_char = chr(0x2800 + v)
-            line.append(braille_char)
+            scrbytes = data.gui_screen_frame.data
 
-        output.append(''.join(line))
+            if len(scrbytes) % 2 != 0 or (last_data and last_data.gui_screen_frame.data == scrbytes):
+                continue
 
-    if return_output:
-        return '\n'.join(output)
-    else:
-        print('\n'.join(output))
+            # Устанавливаем оранжевый фон
+            print(f"\033[H\033[J{self.BLACK_ON_ORANGE}", end='')  # Clear the screen and set orange background
+            display_function(scrbytes)  # Display screen data
 
+            # Отображаем инструкцию внизу экрана
+            self.display_manual_below_screen()
 
-def print_screen(screen_bytes, last_scr=None):
-    data = screen_bytes
-    scr = numpy.zeros((SCREEN_H + 1, SCREEN_W + 1))
+            last_data = data
 
-    x = y = 0
-    basey = 0
+    async def wait_for_exit(self, running_event):
+        await running_event.wait()
 
-    for i in range(0, int(SCREEN_H * SCREEN_W / 8)):
-        tmp = format(data[i], '08b')[::-1]  # Get binary representation and reverse
+    def shutdown_program(self):
+        print("Shutting down the program.")
+        self.enable_input()
+        os._exit(0)
 
-        y = basey
-        x += 1
-        for c in tmp:
-            scr[x][y] = int(c)
+# Логика для отображения
+class DisplayHelper:
+    
+    SCREEN_H = 128
+    SCREEN_W = 64
+
+    def __init__(self):
+        pass
+
+    def print_screen_braille(self, screen_bytes, return_output=False):
+        """Display screen in Braille mode."""
+        data = screen_bytes
+        scr = numpy.zeros((self.SCREEN_W, self.SCREEN_H))
+
+        x = y = 0
+        basex = 0
+
+        for i in range(0, int(self.SCREEN_H * self.SCREEN_W / 8)):
+            tmp = format(data[i], '08b')[::-1]  # Get binary representation and reverse it
+
+            x = basex
             y += 1
 
-        if (i + 1) % SCREEN_H == 0:
-            basey += 8
-            x = 0
+            for c in tmp:
+                scr[x][y % self.SCREEN_H] = int(c)
+                x += 1
 
-    # Compare with the last frame and only update changes
-    if last_scr is not None:
-        for y in range(0, SCREEN_W, 2):
-            for x in range(1, SCREEN_H + 1):
-                current_pixel = (int(scr[x][y]), int(scr[x][y + 1]))
-                last_pixel = (int(last_scr[x][y]), int(last_scr[x][y + 1]))
+            if (i + 1) % self.SCREEN_H == 0:
+                basex += 8
+                y = 0
 
-                if current_pixel != last_pixel:
-                    # Move cursor to the correct position and update only the changed character
-                    print(f"\033[{x};{y//2}H", end='')  # Move cursor to x, y//2
-                    if current_pixel == (1, 1):
+        output = []
+
+        for j in range(0, self.SCREEN_W, 4):
+            line = []
+
+            for i in range(1, self.SCREEN_H, 2):
+                v = 0
+
+                for k in range(8):
+                    x = j
+                    y = i
+                    
+                    if k <= 2:
+                        x += k
+                    elif k <= 5:
+                        y += 1
+                        x += k - 3
+                    elif k == 6:
+                        x += 3
+                    else:
+                        y += 1
+                        x += 3
+
+                    if x < self.SCREEN_W and y < self.SCREEN_H and scr[x][y]:
+                        v |= (1 << k)
+
+                braille_char = chr(0x2800 + v)
+                line.append(braille_char)
+
+            output.append(''.join(line))
+
+        if return_output:
+            return '\n'.join(output)
+        else:
+            print('\n'.join(output))
+
+    def print_screen(self, screen_bytes, last_scr=None):
+        """Display screen in Unicode mode."""
+        data = screen_bytes
+        scr = numpy.zeros((self.SCREEN_H + 1, self.SCREEN_W + 1))
+
+        x = y = 0
+        basey = 0
+
+        for i in range(0, int(self.SCREEN_H * self.SCREEN_W / 8)):
+            tmp = format(data[i], '08b')[::-1]  # Get binary representation and reverse it
+
+            y = basey
+            x += 1
+            for c in tmp:
+                scr[x][y] = int(c)
+                y += 1
+
+            if (i + 1) % self.SCREEN_H == 0:
+                basey += 8
+                x = 0
+
+        if last_scr is not None:
+            for y in range(0, self.SCREEN_W, 2):
+                for x in range(1, self.SCREEN_H + 1):
+                    current_pixel = (int(scr[x][y]), int(scr[x][y + 1]))
+                    last_pixel = (int(last_scr[x][y]), int(last_scr[x][y + 1]))
+
+                    if current_pixel != last_pixel:
+                        print(f"\033[{x};{y//2}H", end='')  # Move cursor to position x, y//2
+                        if current_pixel == (1, 1):
+                            print(u'\u2588', end='')  # Full block
+                        elif current_pixel == (0, 1):
+                            print(u'\u2584', end='')  # Lower half block
+                        elif current_pixel == (1, 0):
+                            print(u'\u2580', end='')  # Upper half block
+                        else:
+                            print(' ', end='')  # Space
+        else:
+            for y in range(0, self.SCREEN_W, 2):
+                for x in range(1, self.SCREEN_H + 1):
+                    if int(scr[x][y]) == 1 and int(scr[x][y + 1]) == 1:
                         print(u'\u2588', end='')  # Full block
-                    elif current_pixel == (0, 1):
+                    elif int(scr[x][y]) == 0 and int(scr[x][y + 1]) == 1:
                         print(u'\u2584', end='')  # Lower half block
-                    elif current_pixel == (1, 0):
+                    elif int(scr[x][y]) == 1 and int(scr[x][y + 1]) == 0:
                         print(u'\u2580', end='')  # Upper half block
                     else:
                         print(' ', end='')  # Space
-    else:
-        # Full screen update if last_scr is None (first frame)
-        for y in range(0, SCREEN_W, 2):
-            for x in range(1, SCREEN_H + 1):
-                if int(scr[x][y]) == 1 and int(scr[x][y + 1]) == 1:
-                    print(u'\u2588', end='')  # Full block
-                elif int(scr[x][y]) == 0 and int(scr[x][y + 1]) == 1:
-                    print(u'\u2584', end='')  # Lower half block
-                elif int(scr[x][y]) == 1 and int(scr[x][y + 1]) == 0:
-                    print(u'\u2580', end='')  # Upper half block
-                else:
-                    print(' ', end='')  # Space
-            print()
+                print()
 
-    return scr  # Return the current frame for comparison in the next iteration
+        return scr  # Return the current image for comparison in the next step
 
-
-async def send_input_event(proto, key, itype):
-    """Send an input event to Flipper Zero with error logging."""
-    try:
-        await proto.gui.send_input_event_request(key=key, itype=itype)
-    except Exception as e:
-        logging.error(f"Error sending input event: {e}")
-
-
-async def send_command_sequence(proto, key, duration):
-    await send_input_event(proto, key, "PRESS")
-    await send_input_event(proto, key, duration)
-    await send_input_event(proto, key, "RELEASE")
-
-
-async def handle_keypress(proto):
-    """Function to handle key presses."""
-    global shutdown_flag
-    loop = asyncio.get_event_loop()
-
-    def on_key_event(event):
-        global shutdown_flag
-        key = event.scan_code
-        shift_pressed = keyboard.is_pressed('shift') or keyboard.is_pressed('right shift')
-
-        commands = {
-            17: "UP", 72: "UP",
-            31: "DOWN", 80: "DOWN",
-            30: "LEFT", 75: "LEFT",
-            32: "RIGHT", 77: "RIGHT",
-            37: "OK", 57: "OK",
-            48: "BACK", 46: "BACK"
-        }
-
-        if key in commands:
-            duration = "LONG" if shift_pressed else "SHORT"
-            loop.create_task(send_command_sequence(proto, commands[key], duration))
-        elif key == 16:  # Terminate the program
-            shutdown_flag = True
-
-    # Set up keyboard event handlers
-    keyboard.on_press(on_key_event)
-
-    # Main program loop
-    while not shutdown_flag:
-        await asyncio.sleep(0.1)
-
-    # Remove keyboard event handlers and clear buffer
-    keyboard.unhook_all()
-    keyboard.clear_all_hotkeys()
-
-
-async def stream_screen(proto, display_function):
-    stream_response = await proto.stream(StartScreenStreamRequestCommand(), command_id=0)
-    last_data = None
-
-    async for data in stream_response:
-        if shutdown_flag:
-            break
-
-        if not data.gui_screen_frame.data:
-            continue
-
-        scrbytes = data.gui_screen_frame.data
-
-        if len(scrbytes) % 2 != 0 or (last_data and last_data.gui_screen_frame.data == scrbytes):
-            continue
-
-        if last_data:
-            for i in range(len(scrbytes)):
-                if scrbytes[i] != last_data.gui_screen_frame.data[i]:
-                    print("\033[H\033[J", end='')  # Clear screen
-                    print(BLACK_ON_ORANGE, end='')
-                    display_function(scrbytes)
-                    print(RESET_COLOR, end='')
-                    break
-        else:
-            os.system('cls' if os.name == 'nt' else 'clear')
-            print("\033[H\033[J", end='')
-            print(BLACK_ON_ORANGE, end='')
-            display_function(scrbytes)
-            print(RESET_COLOR, end='')
-
-        last_data = data
-
-# Main function to run the program
-async def main():
-    # Initialize proto and call handle_keypress and stream_screen here
-    pass
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# Экспортируем необходимые функции
+def setup_helpers():
+    return FlipperHelper(), DisplayHelper()
