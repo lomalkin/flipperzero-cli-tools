@@ -13,4 +13,4 @@ venv/
 # Python Byte-compiled / optimized files
 __pycache__/
 *.py[cod]
-*$py.class
+*$py.class.vscode/

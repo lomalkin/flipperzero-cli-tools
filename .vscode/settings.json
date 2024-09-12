@@ -1,6 +1,0 @@
-{
-    "python.analysis.extraPaths": [
-        "./flipperzero_protobuf_py",
-        "./src"
-    ]
-}
